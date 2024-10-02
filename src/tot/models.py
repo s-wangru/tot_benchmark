@@ -1,6 +1,7 @@
 import os
 import openai
 import backoff 
+import time
 
 completion_tokens = prompt_tokens = 0
 
@@ -19,17 +20,21 @@ if api_base != "":
 def completions_with_backoff(**kwargs):
     return openai.ChatCompletion.create(**kwargs)
 
-def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
+def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None, times=[]) -> list:
     messages = [{"role": "user", "content": prompt}]
-    return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop)
+    return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop, times=times)
     
-def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
+def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None, times=[]) -> list:
     global completion_tokens, prompt_tokens
     outputs = []
     while n > 0:
         cnt = min(n, 20)
         n -= cnt
+        start = time.time()
         res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
+        endTime = time.time()
+        latency = endTime - start
+        times.append((start, endTime, latency, choice["message"]["content"] for choice in res["choices"]))
         outputs.extend([choice["message"]["content"] for choice in res["choices"]])
         # log completion tokens
         completion_tokens += res["usage"]["completion_tokens"]
