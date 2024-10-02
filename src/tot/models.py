@@ -3,6 +3,8 @@ import openai
 import backoff 
 import time
 
+from .traces import traces, Trace, VERBOSE 
+
 completion_tokens = prompt_tokens = 0
 
 api_key = os.getenv("OPENAI_API_KEY", "")
@@ -20,11 +22,11 @@ if api_base != "":
 def completions_with_backoff(**kwargs):
     return openai.ChatCompletion.create(**kwargs)
 
-def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None, times=[]) -> list:
+def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
     messages = [{"role": "user", "content": prompt}]
-    return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop, times=times)
+    return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop)
     
-def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None, times=[]) -> list:
+def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
     global completion_tokens, prompt_tokens
     outputs = []
     while n > 0:
@@ -34,7 +36,9 @@ def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop
         res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
         endTime = time.time()
         latency = endTime - start
-        times.append((start, endTime, latency, choice["message"]["content"] for choice in res["choices"]))
+        if VERBOSE:
+            print('Calling GPT with prompt:', messages)
+        traces.append(Trace(start, endTime, latency, messages, res.choices[0].message.content))
         outputs.extend([choice["message"]["content"] for choice in res["choices"]])
         # log completion tokens
         completion_tokens += res["usage"]["completion_tokens"]

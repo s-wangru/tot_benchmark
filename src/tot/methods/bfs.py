@@ -38,9 +38,9 @@ def get_votes(task, x, ys, n_evaluate_sample):
     values = task.vote_outputs_unwrap(vote_outputs, len(ys))
     return values
 
-def get_proposals(task, x, y, times): 
+def get_proposals(task, x, y): 
     propose_prompt = task.propose_prompt_wrap(x, y)
-    proposals = gpt(propose_prompt, n=1, stop=None, times)[0].split('\n')
+    proposals = gpt(propose_prompt, n=1, stop=None)[0].split('\n')
     return [y + _ + '\n' for _ in proposals]
 
 def get_samples(task, x, y, n_generate_sample, prompt_sample, stop):
@@ -53,7 +53,7 @@ def get_samples(task, x, y, n_generate_sample, prompt_sample, stop):
     samples = gpt(prompt, n=n_generate_sample, stop=stop)
     return [y + _ for _ in samples]
 
-def solve(args, task, idx, to_print=True, times=[]):
+def solve(args, task, idx, to_print=True):
     global gpt
     gpt = partial(gpt, model=args.backend, temperature=args.temperature)
     print(gpt)
@@ -66,7 +66,7 @@ def solve(args, task, idx, to_print=True, times=[]):
             if args.method_generate == 'sample':
                 new_ys = list(itertools.chain(*executor.map(lambda y: get_samples(task, x, y, args.n_generate_sample, prompt_sample=args.prompt_sample, stop=task.stops[step]), ys)))
             elif args.method_generate == 'propose':
-                new_ys = list(itertools.chain(*executor.map(lambda y: get_proposals(task, x, y, times), ys)))
+                new_ys = list(itertools.chain(*executor.map(lambda y: get_proposals(task, x, y), ys)))
 
         ids = list(range(len(new_ys)))
         # evaluation
