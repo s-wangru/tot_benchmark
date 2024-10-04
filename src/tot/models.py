@@ -3,7 +3,7 @@ import openai
 import backoff 
 import time
 
-from .traces import traces, Trace, VERBOSE 
+from .traces import caller
 
 completion_tokens = prompt_tokens = 0
 
@@ -18,31 +18,44 @@ if api_base != "":
     print("Warning: OPENAI_API_BASE is set to {}".format(api_base))
     openai.api_base = api_base
 
-@backoff.on_exception(backoff.expo, openai.error.OpenAIError)
+@backoff.on_exception(backoff.expo, openai.OpenAIError)
 def completions_with_backoff(**kwargs):
     return openai.ChatCompletion.create(**kwargs)
 
 def gpt(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
     messages = [{"role": "user", "content": prompt}]
     return chatgpt(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop)
-    
+
+async def gpt_async(prompt, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
+    messages = [{"role": "user", "content": prompt}]
+    return await chatgpt_async(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=n, stop=stop)
+
 def chatgpt(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
     global completion_tokens, prompt_tokens
     outputs = []
     while n > 0:
         cnt = min(n, 20)
         n -= cnt
-        start = time.time()
-        res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
-        endTime = time.time()
-        latency = endTime - start
-        if VERBOSE:
-            print('Calling GPT with prompt:', messages)
-        traces.append(Trace(start, endTime, latency, messages, res.choices[0].message.content))
-        outputs.extend([choice["message"]["content"] for choice in res["choices"]])
+        res = caller.chat_completion_request(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
+        # res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
+        outputs.extend([choice.message.content for choice in res.choices])
         # log completion tokens
-        completion_tokens += res["usage"]["completion_tokens"]
-        prompt_tokens += res["usage"]["prompt_tokens"]
+        completion_tokens += res.usage.completion_tokens
+        prompt_tokens += res.usage.prompt_tokens
+    return outputs
+
+async def chatgpt_async(messages, model="gpt-4", temperature=0.7, max_tokens=1000, n=1, stop=None) -> list:
+    global completion_tokens, prompt_tokens
+    outputs = []
+    while n > 0:
+        cnt = min(n, 20)
+        n -= cnt
+        res = await caller.chat_completion_request_async(messages, model=model, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
+        # res = completions_with_backoff(model=model, messages=messages, temperature=temperature, max_tokens=max_tokens, n=cnt, stop=stop)
+        outputs.extend([choice.message.content for choice in res.choices])
+        # log completion tokens
+        completion_tokens += res.usage.completion_tokens
+        prompt_tokens += res.usage.prompt_tokens
     return outputs
     
 def gpt_usage(backend="gpt-4"):
