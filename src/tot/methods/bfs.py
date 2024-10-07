@@ -5,6 +5,11 @@ from tot.models import gpt, gpt_async
 from concurrent.futures import ThreadPoolExecutor
 import asyncio
 
+import logging
+
+logging.basicConfig(filename='api_errors.log', level=logging.ERROR)
+
+
 def get_value(task, x, y, n_evaluate_sample, cache_value=True):
     value_prompt = task.value_prompt_wrap(x, y)
     if cache_value and value_prompt in task.value_cache:
@@ -19,7 +24,11 @@ async def get_value_async(task, x, y, n_evaluate_sample, cache_value=True):
     value_prompt = task.value_prompt_wrap(x, y)
     if cache_value and value_prompt in task.value_cache:
         return task.value_cache[value_prompt]
-    value_outputs = await gpt_async(value_prompt, n=n_evaluate_sample, stop=None)
+    try:
+        value_outputs = await gpt_async(value_prompt, n=n_evaluate_sample, stop=None)
+    except Exception as e:
+        logging.error(f"gpt_async error: {e}")
+        return 0
     value = task.value_outputs_unwrap(x, y, value_outputs)
     if cache_value:
         task.value_cache[value_prompt] = value
@@ -27,15 +36,10 @@ async def get_value_async(task, x, y, n_evaluate_sample, cache_value=True):
 
 def get_values(task, x, ys, n_evaluate_sample, cache_value=True):
     values = []
-    local_value_cache = {}
 
     def evaluate(y):
-        if y in local_value_cache:
-            return 0
-        else:
-            value = get_value(task, x, y, n_evaluate_sample, cache_value=cache_value)
-            local_value_cache[y] = value
-            return value
+        value = get_value(task, x, y, n_evaluate_sample, cache_value=cache_value)
+        return value
 
     # with ThreadPoolExecutor() as executor:
     values = list(evaluate(y) for y in ys)
@@ -82,10 +86,12 @@ async def get_samples_async(task, x, y, n_generate_sample, prompt_sample, stop):
         prompt = task.cot_prompt_wrap(x, y)
     else:
         raise ValueError(f'prompt_sample {prompt_sample} not recognized')
+    print("-------------prompt-------------")
+    print('prompt:', prompt)
     samples = await gpt_async(prompt, n=n_generate_sample, stop=stop)
     return [y + _ for _ in samples]
 
-def solve(args, task, idx, to_print=True):
+def solve(args, task, idx, to_print=True, parallel = True):
     print('args', args)
     
     global gpt
@@ -98,16 +104,20 @@ def solve(args, task, idx, to_print=True):
     # loop = asyncio.get_event_loop()
     for step in range(task.steps):
         # generation
-        # with ThreadPoolExecutor() as executor:
         if args.method_generate == 'sample':
-            tasks = [get_samples_async(task, x, y, args.n_generate_sample, args.prompt_sample, task.stops[step]) for y in ys]
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            new_ys = loop.run_until_complete(asyncio.gather(*tasks))
+            new_ys = []
+            if parallel:
+                tasks = [get_samples_async(task, x, y, args.n_generate_sample, args.prompt_sample, task.stops[step]) for y in ys]
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                new_ys = loop.run_until_complete(asyncio.gather(*tasks))
+            else:
+                new_ys = [get_samples(task, x, y, args.n_generate_sample, args.prompt_sample, task.stops[step]) for y in ys]
             new_ys = sum(new_ys, [])
             # new_ys = list(itertools.chain(*executor.map(lambda y: get_samples(task, x, y, args.n_generate_sample, prompt_sample=args.prompt_sample, stop=task.stops[step]), ys)))
         elif args.method_generate == 'propose':
-            tasks = [get_proposals_async(task, x, y) for y in ys]
+            tasks = [get_proposals_async(task, x, y) for y in ys] if parallel else \
+                    [get_proposals(task, x, y) for y in ys]
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             new_ys = loop.run_until_complete(asyncio.gather(*tasks))
@@ -120,7 +130,8 @@ def solve(args, task, idx, to_print=True):
             values = get_votes(task, x, new_ys, args.n_evaluate_sample)
         elif args.method_evaluate == 'value':
             # values = get_values(task, x, new_ys, args.n_evaluate_sample)
-            values = asyncio.run(get_values_async(task, x, new_ys, args.n_evaluate_sample))
+            values = asyncio.run(get_values_async(task, x, new_ys, args.n_evaluate_sample)) if parallel else \
+                        get_values(task, x, new_ys, args.n_evaluate_sample)
 
         # selection
         if args.method_select == 'sample':

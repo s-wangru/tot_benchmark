@@ -19,12 +19,13 @@ class Trace:
     messages: List[dict]
     tools: List[dict]
     response: dict
-    begin_time: float
+    start_time: float
     end_time: float
-    elasped_time: float
+    elapsed_time: float
     openai_processing_time: float
     input_tokens: int
     output_tokens: int
+    parallel: bool
 
 class CachedOpenAI:
     def __init__(self, name, use_cache = True, verbose = False):
@@ -98,7 +99,7 @@ class CachedAPICaller:
                                 messages, 
                                 tools = None, 
                                 tool_choices = None, 
-                                model = "gpt-4o",
+                                model = "gpt-3.5-turbo",
                                 n = 1,
                                 **kwargs) -> openai.types.chat.chat_completion.ChatCompletion:
         message_hash = self.hash_messages(messages, tools)
@@ -179,8 +180,8 @@ class CachedAPICaller:
         if self.verbose: 
             print("response", response)
         
-        assert len(response.choices) >= query_count
-        response.choices = response.choices[query_count - n: query_count]
+        # assert len(response.choices) >= query_count
+        response.choices = response.choices[max(query_count - n, 0): min(query_count, len(response.choices))]
         print('len(response.choices)', len(response.choices))
         end_time = time.perf_counter()
         elapsed_time = (end_time - start_time) * 1000
@@ -192,7 +193,7 @@ class CachedAPICaller:
             end_time, 
             elapsed_time, 
             float(openai_processing_time), 
-            input_tokens, output_tokens))
+            input_tokens, output_tokens, True))
         
         return response
     
@@ -200,7 +201,7 @@ class CachedAPICaller:
                                 messages, 
                                 tools = None, 
                                 tool_choices = None, 
-                                model = "gpt-4o",
+                                model = "gpt-3.5-turbo",
                                 n = 1,
                                 **kwargs) -> openai.types.chat.chat_completion.ChatCompletion:
         message_hash = self.hash_messages(messages, tools)
@@ -234,17 +235,17 @@ class CachedAPICaller:
         else: 
             if self.verbose:
                 print("Cache miss")
-            for _ in range(1):
+            for _ in range(2):
                 try:
                     t = time.perf_counter()
-                    response = self.client.chat.completions.with_raw_response.create(
+                    response = asyncio.run(self.client.chat.completions.with_raw_response.create(
                         model=model,
                         messages=messages,
                         tools=tools,
                         tool_choice=tool_choices,
                         n=n_new_query,
                         **kwargs
-                    )
+                    ))
                     elapsed_time = (time.perf_counter() - t)
                     openai_processing_time = response.headers.get('openai-processing-ms')
                     input_tokens = response.headers.get('prompt_tokens')
@@ -289,7 +290,7 @@ class CachedAPICaller:
             end_time, 
             elapsed_time, 
             float(openai_processing_time), 
-            input_tokens, output_tokens))
+            input_tokens, output_tokens, False))
         
         return response
 
@@ -298,6 +299,7 @@ caller: CachedAPICaller = None
 def init_caller(name, verbose = False, async_mode = False, use_cache = True):
     global caller
     caller = CachedAPICaller(name, verbose = verbose, async_mode = async_mode, use_cache=use_cache)
+    return caller
 
 
 VERBOSE = True
